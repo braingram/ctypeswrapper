@@ -1,0 +1,21 @@
+start ctypes wrapper, will be more than a bit of code
+
+looked for alternatives, found cffi. Attempted with little success.
+Will still require extensive cdef (at least as far as I could tell).
+
+Instead, working on automatic ctypes generator (see wrap.py).
+
+Uses pycparser to parse the c header files and then (eventually)
+generate python code. This could maybe work on-the-fly or as a command line
+script that generates a python file as a starting point for a ctypes based
+wrapper.
+
+So far, it can parse the header file into everything except the very end
+where there are pointers to functions (fc2BusEventCallback etc...).
+
+The next step is to make a generator to test with point grey cameras.
+Can also test with:
+
+1) smaract
+2) andor
+3) other libraries?
