@@ -56,7 +56,33 @@ def ctype_from_names(names, other_types=None):
 class Enum(dict):
     def __init__(self, name, *args, **kwargs):
         dict.__init__(self, *args, **kwargs)
+        self.reverse = dict([(self[n], n) for n in self])
         self.name = name
+
+    def name_to_value(self, name):
+        return dict.__getitem__(self, name)
+
+    def value_to_name(self, value):
+        return self.reverse[value]
+
+    def __getitem__(self, k):
+        if isinstance(k, (str, unicode)):
+            return self.name_to_value(k)
+        elif isinstance(k, int):
+            return self.value_to_name(k)
+        else:
+            raise ValueError(
+                "Invalid enum key {}, must be str, unicode or int: {}".format(
+                    k, type(k)))
+
+
+def arg_type_convert(v, atype=None, byref=None):
+    if type(v).__name__ != atype:
+        # TODO this isn't working and should be fixed!
+        v = atype(v)  # TODO how do I get around variables being 'shadowed'?
+    if byref:
+        return ctypes.byref(v)
+    return v
 
 
 class Function(object):
@@ -64,9 +90,46 @@ class Function(object):
         self.name = name
         self.restype = restype
         self.args = args
+        self.lib = None
 
     def as_ctype(self):
         return ctypes.CFUNCTYPE(self.restype, *[a[1] for a in self.args])
+
+    def generate_spec(self, namespace):
+        # TODO do I need the namespace here... probably for typedefs
+        converter = []
+        # TODO generate converter for __call__, maybe even a *gasp* doc string
+        for n, v in self.args:
+            argtype = type(v).__name__
+            if argtype == 'PyCSimpleType':  # pass by value
+                converter.append(
+                    lambda v, a=argtype, b=False: arg_type_convert(v, a, b)
+                    )
+            elif argtype == 'PyCPointerType':  # pass by ref
+                converter.append(
+                    lambda v, a=argtype, b=True: arg_type_convert(v, a, b)
+                    )
+            elif argtype == 'PyCStructType':
+                converter.append(
+                    lambda v, a=argtype, b=False: arg_type_convert(v, a, b)
+                    )
+            else:
+                raise Exception(
+                    "Unknown arg type {} for {} {}".format(argtype, n, v))
+        self.assign_lib(namespace._lib)
+        # TODO make this not UGLY
+        self.converter = converter
+
+    def assign_lib(self, lib):
+        self.lib = lib
+        self.func = getattr(self.lib, self.name)
+        # TODO set restype and argtypes for safer operation
+        self.func.restype = self.restype
+        self.func.argtypes = [v for _, v in self.args]
+
+    def __call__(self, *args):
+        # TODO make the converter not use zip (izip?)
+        return self.func(*[c(a) for (c, a) in zip(self.converter, args)])
 
 
 class ASTParser(object):
@@ -131,7 +194,7 @@ class ASTParser(object):
         return self.parse(ast.type, *args, **kwargs)
 
     def Decl(self, ast):
-        return ast.name, self.parse(ast.type)
+        return ast.name, self.parse(ast.type, name=ast.name)
 
     def ArrayDecl(self, ast, *args, **kwargs):
         return self.parse(ast.type) * self.parse(ast.dim)
