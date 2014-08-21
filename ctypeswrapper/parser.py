@@ -11,6 +11,11 @@ base_types = {
     'void': None,
 }
 
+unary_ops = {
+    '-': lambda v: -v,
+    '+': lambda v: +v,
+}
+
 
 def ctype_from_names(names, other_types=None):
     """Given ast.names lookup a matching ctype"""
@@ -48,6 +53,22 @@ def ctype_from_names(names, other_types=None):
     return getattr(ctypes, 'c_{}'.format(t))
 
 
+class Enum(dict):
+    def __init__(self, name, *args, **kwargs):
+        dict.__init__(self, *args, **kwargs)
+        self.name = name
+
+
+class Function(object):
+    def __init__(self, name, restype, *args):
+        self.name = name
+        self.restype = restype
+        self.args = args
+
+    def as_ctype(self):
+        return ctypes.CFUNCTYPE(self.restype, *[a[1] for a in self.args])
+
+
 class ASTParser(object):
     def __init__(self, types=None):
         if types is not None:
@@ -60,13 +81,35 @@ class ASTParser(object):
         if not hasattr(self, t):
             print("Unknown ast type: {}".format(t))
             ast.show()
-            return None
+            raise Exception("Unknown ast type: {}".format(t))
         else:
             return getattr(self, type(ast).__name__)(ast, *args, **kwargs)
 
     def Enum(self, ast, name=None):
-        raise Exception
-        pass
+        name = ast.name
+        objects = []
+        for e in ast.values.enumerators:
+            n, v = self.parse(e, objects=objects)
+            objects.append((n, v))
+        e = Enum(name, objects)
+        return e
+
+    def Enumerator(self, ast, objects=None):
+        if hasattr(ast, 'value') and ast.value is not None:
+            if isinstance(ast.value, pycparser.c_ast.ID):
+                # TODO handle this better
+                for (n, v) in objects:
+                    if n == ast.value.name:
+                        return (ast.name, v)
+                ast.value.show()
+                raise Exception("Failed to parse: {}".format(ast.value))
+            else:
+                return (ast.name, self.parse(ast.value))
+        else:
+            if len(objects):
+                return (ast.name, objects[-1][1] + 1)
+            else:
+                return (ast.name, 0)
 
     def Struct(self, ast, name=None):
         if ast.name is not None:
@@ -76,7 +119,12 @@ class ASTParser(object):
 
     def Typedef(self, ast):
         t = self.parse(ast.type, name=ast.name)
-        self.types[ast.name] = t
+        if isinstance(t, Enum):
+            self.types[ast.name] = ctypes.c_int
+        elif isinstance(t, Function):
+            return t.as_ctype()
+        else:
+            self.types[ast.name] = t
         return ast.name, t
 
     def TypeDecl(self, ast, *args, **kwargs):
@@ -92,7 +140,11 @@ class ASTParser(object):
         return ctype_from_names(ast.names, self.types)
 
     def PtrDecl(self, ast, *args, **kwargs):
-        return ctypes.POINTER(self.parse(ast.type, *args, **kwargs))
+        v = self.parse(ast.type, *args, **kwargs)
+        if isinstance(v, Function):
+            return ctypes.POINTER(v.as_ctype())
+        else:
+            return ctypes.POINTER(v)
 
     def Constant(self, ast):
         return eval(ast.value)  # TODO make this less dangerous
@@ -102,7 +154,10 @@ class ASTParser(object):
             str(self.parse(ast.left)) + ast.op + str(self.parse(ast.right)))
 
     def UnaryOp(self, ast):
-        op = getattr(ctypes, ast.op)
+        if ast.op in unary_ops:
+            op = unary_ops[ast.op]
+        else:
+            op = getattr(ctypes, ast.op)
         return op(self.parse(ast.expr))
 
     def Typename(self, ast):
@@ -117,91 +172,15 @@ class ASTParser(object):
     def Cast(self, ast):
         return self.parse(ast.to_type)(self.parse(ast.expr)).value
 
-
-def parse_enum(ast):
-    enum = {}
-    v = 0
-    for _, e in ast.values.children():
-        if e.value is None:
-            enum[e.name] = v
-        elif isinstance(e.value, pycparser.c_ast.ID):
-            enum[e.name] = enum[e.value.name]
-        elif isinstance(e.value, pycparser.c_ast.Constant):
-            enum[e.name] = eval(e.value.value)
-        elif isinstance(e.value, pycparser.c_ast.UnaryOp):
-            enum[e.name] = eval(e.value.expr.value)
-        v = enum[e.name] + 1
-    return enum
-
-
-def parse_struct(ast):
-    struct = {}
-    for d in ast.decls:
-        struct[d.name] = parse_decl(d.type)
-    ast.show()
-    print(struct)
-    return struct
-
-
-def parse_decl(ast):
-    if isinstance(ast, pycparser.c_ast.TypeDecl):
-        return parse_decl(ast.type)
-    elif isinstance(ast, pycparser.c_ast.PtrDecl):
-        decl = parse_decl(ast.type.type)
-        decl['access'] += '*'
-        return decl
-    elif isinstance(ast, pycparser.c_ast.ArrayDecl):
-        decl = parse_decl(ast.type.type)
-        decl['dim'] = ast.dim.value
-        return decl
-    else:
-        if not isinstance(ast, pycparser.c_ast.IdentifierType):
-            raise Exception("Expected IdentifierType: {}".format(ast))
-        return {
-            'type': ' '.join(ast.names),
-            'access': '',
-        }
-
-
-def parse_function(ast):
-    ret = parse_decl(ast.type)
-    args = []
-    if ast.args is not None:
-        for p in ast.args.params:
-            # pointer?
-            arg = parse_decl(p.type)
-            arg['name'] = p.name
-            args.append(arg)
-    return {'return': ret, 'args': args}
-
-
-def parse_ast(ast):
-    api = {}
-    api['typedefs'] = {}
-    api['declarations'] = {}
-    for _, child in ast.children():
-        if isinstance(child, pycparser.c_ast.Typedef):
-            api['typedefs'][child.name] = parse_typedef(child.type)
-        elif isinstance(child, pycparser.c_ast.Decl):
-            api['declarations'][child.name] = parse_decl(child.type)
-        else:
-            raise Exception("Unknown ast element: {}".format(child.show()))
-    # old
-    #        # struct, typedef?
-    #        if isinstance(child.type.type, pycparser.c_ast.Enum):
-    #            api['types'][child.name] = parse_enum(child.type.type)
-    #        elif isinstance(child.type.type, pycparser.c_ast.Struct):
-    #            api['structs'][child.name] = parse_struct(child.type.type)
-    #        elif isinstance(child.type.type, pycparser.c_ast.FuncDecl):
-    #            print("Not yet supported, skipping")
-    #            # TODO support this
-    #            child.show()
-    #        else:
-    #            api['types'][child.name] = parse_decl(child.type)
-    #    elif isinstance(child, pycparser.c_ast.Decl):
-    #        api['functions'][child.name] = parse_function(child.type)
-    #    else:
-    return api
+    def FuncDecl(self, ast, name=None):
+        ret = self.parse(ast.type)
+        args = []
+        if ast.args is not None:
+            for p in ast.args.params:
+                # pointer?
+                arg = self.parse(p)
+                args.append(arg)
+        return Function(name, ret, *args)
 
 
 def parse_filename(fn, **kwargs):
