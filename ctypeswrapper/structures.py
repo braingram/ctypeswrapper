@@ -106,3 +106,13 @@ class Function(object):
                     len(args), len(self.converter)))
         return self.func(*[
             c(a) for (c, a) in itertools.izip(self.converter, args)])
+
+    def __dump__(self):
+        """
+        # set restype and argtypes of lib function
+        def function_name(arg1, arg2, arg3, ...):
+            # do arg conversion
+            lib.function_name(arg1, arg2, arg3)
+        """
+        raise Exception
+        pass

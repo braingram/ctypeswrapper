@@ -8,9 +8,7 @@ and generate ctypes bindings
 class NameSpace(object):
     def __init__(self, lib, rep):
         self._lib = lib
-        self._generate(lib, rep)
-
-    def _generate(self, lib, rep):
+        self._rep = rep
         for (n, v) in rep:
             vt = type(v).__name__
             # TODO this can probably be simplified
