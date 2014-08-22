@@ -2,12 +2,10 @@
 
 import copy
 import ctypes
-import itertools
-import os
-import subprocess
-import tempfile
 
 import pycparser
+
+from . import structures
 
 # rather than monkey-patch ctypes, include other common types here
 base_types = {
@@ -58,112 +56,6 @@ def ctype_from_names(names, other_types=None):
     return getattr(ctypes, 'c_{}'.format(t))
 
 
-class Enum(dict):
-    def __init__(self, name, *args, **kwargs):
-        dict.__init__(self, *args, **kwargs)
-        self.reverse = dict([(self[n], n) for n in self])
-        self.name = name
-
-    def name_to_value(self, name):
-        return dict.__getitem__(self, name)
-
-    def value_to_name(self, value):
-        return self.reverse[value]
-
-    def __getitem__(self, k):
-        if isinstance(k, (str, unicode)):
-            return self.name_to_value(k)
-        elif isinstance(k, int):
-            return self.value_to_name(k)
-        else:
-            raise ValueError(
-                "Invalid enum key {}, must be str, unicode or int: {}".format(
-                    k, type(k)))
-
-
-def arg_type_convert(v, atype=None, ptype=None, byref=None):
-    """
-    This needs to know the un-pointered type when arg by value
-    """
-    if byref:
-        if type(v) == atype:
-            return v
-        # this should be a simple ctype that will be pointed to
-        if type(v).__module__ == 'ctypes':  # this is a valid ctypes object
-            return ctypes.byref(v)
-        if type(type(v)).__module__ == '_ctypes':  # defined struct, etc
-            return ctypes.byref(v)
-        # this is a non-ctypes object, so making it into a ctypes object
-        # would 'shadow' the arg, causing any change to the generated
-        # ctype object to be lost. so throw an exception
-        raise Exception(
-            "Arguments passed by reference must "
-            "be ctypes object: {}, {}".format(v, type(v)))
-    if type(v) != atype:
-        return atype(v)
-    return v
-
-
-class Function(object):
-    def __init__(self, name, restype, *args):
-        self.name = name
-        self.restype = restype
-        self.args = args
-        self.func = None
-        self.lib = None
-        self.converter = None
-
-    def as_ctype(self):
-        return ctypes.CFUNCTYPE(self.restype, *[a[1] for a in self.args])
-
-    def generate_spec(self, namespace):
-        # TODO do I need the namespace here... probably for typedefs
-        self.converter = []
-        # TODO generate converter for __call__, maybe even a *gasp* doc string
-        for n, vt in self.args:
-            argtype = type(vt).__name__  # this is a type of a type
-            if argtype == 'PyCSimpleType':  # pass by value
-                self.converter.append(
-                    lambda v, a=vt, b=False:
-                    arg_type_convert(v, a, b)
-                    )
-            elif argtype == 'PyCPointerType':  # pass by ref
-                self.converter.append(
-                    lambda v, a=vt, b=True:
-                    arg_type_convert(v, a, b)
-                    )
-            elif argtype == 'PyCStructType':
-                self.converter.append(
-                    lambda v, a=vt, b=False:
-                    arg_type_convert(v, a, b)
-                    )
-            else:
-                raise Exception(
-                    "Unknown arg type {} for {} {}".format(argtype, n, vt))
-        self.assign_lib(namespace._lib)
-        self.__doc__ = 'args: {}'.format(self.args)
-
-    def assign_lib(self, lib):
-        self.lib = lib
-        self.func = getattr(self.lib, self.name)
-        self.func.restype = self.restype
-        self.func.argtypes = [v for _, v in self.args]
-
-    def __call__(self, *args):
-        if self.func is None:
-            raise Exception(
-                "Function has not been bound to a library: see assign_lib")
-        if self.converter is None:
-            raise Exception(
-                "Function spec has not been generated: see generate_spec")
-        if len(self.converter) != len(args):
-            raise Exception(
-                "Invalid number of args {} != {}".format(
-                    len(args), len(self.converter)))
-        return self.func(*[
-            c(a) for (c, a) in itertools.izip(self.converter, args)])
-
-
 class ASTParser(object):
     def __init__(self, types=None):
         if types is not None:
@@ -186,7 +78,7 @@ class ASTParser(object):
         for e in ast.values.enumerators:
             n, v = self.parse(e, objects=objects)
             objects.append((n, v))
-        e = Enum(name, objects)
+        e = structures.Enum(name, objects)
         return e
 
     def Enumerator(self, ast, objects=None):
@@ -214,9 +106,9 @@ class ASTParser(object):
 
     def Typedef(self, ast):
         t = self.parse(ast.type, name=ast.name)
-        if isinstance(t, Enum):
+        if isinstance(t, structures.Enum):
             self.types[ast.name] = ctypes.c_int
-        elif isinstance(t, Function):
+        elif isinstance(t, structures.Function):
             return t.as_ctype()
         else:
             self.types[ast.name] = t
@@ -236,7 +128,7 @@ class ASTParser(object):
 
     def PtrDecl(self, ast, *args, **kwargs):
         v = self.parse(ast.type, *args, **kwargs)
-        if isinstance(v, Function):
+        if isinstance(v, structures.Function):
             return ctypes.POINTER(v.as_ctype())
         else:
             return ctypes.POINTER(v)
@@ -275,58 +167,15 @@ class ASTParser(object):
                 # pointer?
                 arg = self.parse(p)
                 args.append(arg)
-        return Function(name, ret, *args)
-
-
-def preprocess_filename(fn):
-    raise Exception("Leave this up to the user")
-    tfn0 = os.path.join(
-        tempfile.gettempdir(), 'ctw_gcc_{}'.format(os.path.basename(fn)))
-    tfn1 = os.path.join(
-        tempfile.gettempdir(), 'ctw_cpp_{}'.format(os.path.basename(fn)))
-    cmd0 = "gcc -nostdinc -E -P {}".format(fn)
-    cmd1 = "cpp -nostdinc -P {}".format(tfn0)
-    with open(tfn0, 'w') as f:
-        print "running {}".format(cmd0)
-        p = subprocess.Popen(cmd0.split(), stdout=f)
-        # this will very likely return non-zero because of missing stdlibs
-        p.wait()
-    with open(tfn1, 'w') as f:
-        print "running {}".format(cmd1)
-        subprocess.check_call(cmd1.split(), stdout=f)
-    if os.path.exists(tfn0):
-        os.remove(tfn0)
-    return tfn1
+        return structures.Function(name, ret, *args)
 
 
 def parse_filename(fn, **kwargs):
-    # TODO preprocess with
-    if kwargs.get('preprocess', False):
-        tfn = preprocess_filename(fn)
-        # gcc -E -P <header> | cpp -nostdinc -P
-        ast = pycparser.parse_file(tfn, **kwargs)
-        parser = ASTParser()
-        r = parser.parse(ast)
-        if os.path.exists(tfn):
-            os.remove(tfn)
-        return r
     ast = pycparser.parse_file(fn, **kwargs)
     parser = ASTParser()
     r = parser.parse(ast)
     return r
 
 
-def test():
-    fn = 'foo.h'
-    kwargs = {
-        'use_cpp': True,
-        'cpp_args': ['-nostdinc', '-P'],
-    }
-    ast = pycparser.parse_file(fn, **kwargs)
-    return None, ast
-    api = parse_filename(fn, **kwargs)
-    return api, ast
-
 if __name__ == '__main__':
-    api, ast = test()
-    p = ASTParser()
+    pass
