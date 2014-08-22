@@ -3,6 +3,9 @@
 import copy
 import ctypes
 import itertools
+import os
+import subprocess
+import tempfile
 
 import pycparser
 
@@ -10,6 +13,7 @@ import pycparser
 base_types = {
     'uchar': ctypes.c_ubyte,
     'void': None,
+    '_Bool': ctypes.c_bool,
 }
 
 unary_ops = {
@@ -274,7 +278,38 @@ class ASTParser(object):
         return Function(name, ret, *args)
 
 
+def preprocess_filename(fn):
+    raise Exception("Leave this up to the user")
+    tfn0 = os.path.join(
+        tempfile.gettempdir(), 'ctw_gcc_{}'.format(os.path.basename(fn)))
+    tfn1 = os.path.join(
+        tempfile.gettempdir(), 'ctw_cpp_{}'.format(os.path.basename(fn)))
+    cmd0 = "gcc -nostdinc -E -P {}".format(fn)
+    cmd1 = "cpp -nostdinc -P {}".format(tfn0)
+    with open(tfn0, 'w') as f:
+        print "running {}".format(cmd0)
+        p = subprocess.Popen(cmd0.split(), stdout=f)
+        # this will very likely return non-zero because of missing stdlibs
+        p.wait()
+    with open(tfn1, 'w') as f:
+        print "running {}".format(cmd1)
+        subprocess.check_call(cmd1.split(), stdout=f)
+    if os.path.exists(tfn0):
+        os.remove(tfn0)
+    return tfn1
+
+
 def parse_filename(fn, **kwargs):
+    # TODO preprocess with
+    if kwargs.get('preprocess', False):
+        tfn = preprocess_filename(fn)
+        # gcc -E -P <header> | cpp -nostdinc -P
+        ast = pycparser.parse_file(tfn, **kwargs)
+        parser = ASTParser()
+        r = parser.parse(ast)
+        if os.path.exists(tfn):
+            os.remove(tfn)
+        return r
     ast = pycparser.parse_file(fn, **kwargs)
     parser = ASTParser()
     r = parser.parse(ast)
@@ -282,7 +317,6 @@ def parse_filename(fn, **kwargs):
 
 
 def test():
-    #fn = '/usr/include/flycapture/C/FlyCapture2_C.h'
     fn = 'foo.h'
     kwargs = {
         'use_cpp': True,
