@@ -8,6 +8,7 @@ import ctypes
 
 
 class NameSpace(object):
+    # TODO combine this with generate
     def __init__(self, lib):
         # TODO what is the best way to handle this lib?
         self._lib = lib

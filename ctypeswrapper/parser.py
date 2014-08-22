@@ -2,6 +2,7 @@
 
 import copy
 import ctypes
+import itertools
 
 import pycparser
 
@@ -76,12 +77,26 @@ class Enum(dict):
                     k, type(k)))
 
 
-def arg_type_convert(v, atype=None, byref=None):
-    if type(v).__name__ != atype:
-        # TODO this isn't working and should be fixed!
-        v = atype(v)  # TODO how do I get around variables being 'shadowed'?
+def arg_type_convert(v, atype=None, ptype=None, byref=None):
+    """
+    This needs to know the un-pointered type when arg by value
+    """
     if byref:
-        return ctypes.byref(v)
+        if type(v) == atype:
+            return v
+        # this should be a simple ctype that will be pointed to
+        if type(v).__module__ == 'ctypes':  # this is a valid ctypes object
+            return ctypes.byref(v)
+        if type(type(v)).__module__ == '_ctypes':  # defined struct, etc
+            return ctypes.byref(v)
+        # this is a non-ctypes object, so making it into a ctypes object
+        # would 'shadow' the arg, causing any change to the generated
+        # ctype object to be lost. so throw an exception
+        raise Exception(
+            "Arguments passed by reference must "
+            "be ctypes object: {}, {}".format(v, type(v)))
+    if type(v) != atype:
+        return atype(v)
     return v
 
 
@@ -90,46 +105,59 @@ class Function(object):
         self.name = name
         self.restype = restype
         self.args = args
+        self.func = None
         self.lib = None
+        self.converter = None
 
     def as_ctype(self):
         return ctypes.CFUNCTYPE(self.restype, *[a[1] for a in self.args])
 
     def generate_spec(self, namespace):
         # TODO do I need the namespace here... probably for typedefs
-        converter = []
+        self.converter = []
         # TODO generate converter for __call__, maybe even a *gasp* doc string
-        for n, v in self.args:
-            argtype = type(v).__name__
+        for n, vt in self.args:
+            argtype = type(vt).__name__  # this is a type of a type
             if argtype == 'PyCSimpleType':  # pass by value
-                converter.append(
-                    lambda v, a=argtype, b=False: arg_type_convert(v, a, b)
+                self.converter.append(
+                    lambda v, a=vt, b=False:
+                    arg_type_convert(v, a, b)
                     )
             elif argtype == 'PyCPointerType':  # pass by ref
-                converter.append(
-                    lambda v, a=argtype, b=True: arg_type_convert(v, a, b)
+                self.converter.append(
+                    lambda v, a=vt, b=True:
+                    arg_type_convert(v, a, b)
                     )
             elif argtype == 'PyCStructType':
-                converter.append(
-                    lambda v, a=argtype, b=False: arg_type_convert(v, a, b)
+                self.converter.append(
+                    lambda v, a=vt, b=False:
+                    arg_type_convert(v, a, b)
                     )
             else:
                 raise Exception(
-                    "Unknown arg type {} for {} {}".format(argtype, n, v))
+                    "Unknown arg type {} for {} {}".format(argtype, n, vt))
         self.assign_lib(namespace._lib)
-        # TODO make this not UGLY
-        self.converter = converter
+        self.__doc__ = 'args: {}'.format(self.args)
 
     def assign_lib(self, lib):
         self.lib = lib
         self.func = getattr(self.lib, self.name)
-        # TODO set restype and argtypes for safer operation
         self.func.restype = self.restype
         self.func.argtypes = [v for _, v in self.args]
 
     def __call__(self, *args):
-        # TODO make the converter not use zip (izip?)
-        return self.func(*[c(a) for (c, a) in zip(self.converter, args)])
+        if self.func is None:
+            raise Exception(
+                "Function has not been bound to a library: see assign_lib")
+        if self.converter is None:
+            raise Exception(
+                "Function spec has not been generated: see generate_spec")
+        if len(self.converter) != len(args):
+            raise Exception(
+                "Invalid number of args {} != {}".format(
+                    len(args), len(self.converter)))
+        return self.func(*[
+            c(a) for (c, a) in itertools.izip(self.converter, args)])
 
 
 class ASTParser(object):
