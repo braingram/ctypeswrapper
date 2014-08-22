@@ -19,7 +19,7 @@ class NameSpace(object):
                 setattr(self, n, v)
             elif vt == 'Function':
                 # function
-                v.generate_spec(self)
+                v.generate_spec(lib)
                 setattr(self, n, v)
             elif vt == 'Enum':
                 setattr(self, n, v)
