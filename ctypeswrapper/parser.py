@@ -2,10 +2,14 @@
 
 import copy
 import ctypes
+import os
 
 import pycparser
 
 from . import structures
+
+fake_libc_path = os.path.join(
+    os.path.dirname(__file__), 'fake_libc')
 
 # rather than monkey-patch ctypes, include other common types here
 base_types = {
@@ -171,6 +175,16 @@ class ASTParser(object):
 
 
 def parse_filename(fn, **kwargs):
+    if kwargs.get('fake_stdlib', False):
+        # use the fake libs
+        # add them to cpp_args
+        cpp_args = kwargs.get('cpp_args', '')
+        # use the fake libs from here
+        if isinstance(cpp_args, list):
+            cpp_args.append('-I{}'.format(fake_libc_path))
+        else:
+            cpp_args += '-I{}'.format(fake_libc_path)
+        kwargs['cpp_args'] = cpp_args
     ast = pycparser.parse_file(fn, **kwargs)
     parser = ASTParser()
     r = parser.parse(ast)
