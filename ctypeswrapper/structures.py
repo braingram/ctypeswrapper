@@ -25,7 +25,7 @@ class Enum(dict):
                     k, type(k)))
 
 
-def arg_type_convert(v, atype=None, ptype=None, byref=None):
+def arg_type_convert(v, atype=None, byref=None):
     """
     This needs to know the un-pointered type when arg by value
     """
@@ -70,17 +70,17 @@ class Function(object):
                 self.converter.append(
                     lambda v, a=vt, b=False:
                     arg_type_convert(v, a, b)
-                    )
+                )
             elif argtype == 'PyCPointerType':  # pass by ref
                 self.converter.append(
                     lambda v, a=vt, b=True:
                     arg_type_convert(v, a, b)
-                    )
+                )
             elif argtype == 'PyCStructType':
                 self.converter.append(
                     lambda v, a=vt, b=False:
                     arg_type_convert(v, a, b)
-                    )
+                )
             else:
                 raise Exception(
                     "Unknown arg type {} for {} {}".format(argtype, n, vt))
