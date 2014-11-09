@@ -179,7 +179,8 @@ def dumps(rep, library):
 
 
 def dump(rep, library, f):
-    pass
+    g = Generator(rep, library, f)
+    return g()
 
 
 def generate(header_filename, output_filename, library_filename=None):
