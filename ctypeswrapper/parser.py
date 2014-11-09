@@ -133,7 +133,10 @@ class ASTParser(object):
     def PtrDecl(self, ast, *args, **kwargs):
         v = self.parse(ast.type, *args, **kwargs)
         if isinstance(v, structures.Function):
-            return ctypes.POINTER(v.as_ctype())
+            p = ctypes.POINTER(v.as_ctype())
+            # needed for generator
+            p._func = v
+            return p
         else:
             return ctypes.POINTER(v)
 
@@ -185,6 +188,7 @@ def parse_filename(fn, **kwargs):
         else:
             cpp_args += '-I{}'.format(fake_libc_path)
         kwargs['cpp_args'] = cpp_args
+        del kwargs['fake_stdlib']
     ast = pycparser.parse_file(fn, **kwargs)
     parser = ASTParser()
     r = parser.parse(ast)
