@@ -112,7 +112,7 @@ class Generator(object):
     def enum(self, item, name=None):
         if name is None:
             raise Exception("Invalid enum without name: %s" % item)
-        r = "%s = Enum([\n" % name
+        r = "%s = Enum('%s', [\n" % (name, name)
         for k in item:
             r += "    ('%s', %s),\n" % (k, item[k])
         r += "])\n\n"
