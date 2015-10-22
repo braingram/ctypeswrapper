@@ -26,6 +26,9 @@ class NameSpace(object):
                 setattr(self, n, v)
             elif vt == 'PyCSimpleType':
                 setattr(self, n, v)
+            elif vt == 'NoneType':
+                # TODO none values aren't handled properly
+                setattr(self, n, v)
             else:
                 raise Exception(
                     "Unknown representation value type {}".format(vt))

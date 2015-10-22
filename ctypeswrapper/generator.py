@@ -3,6 +3,7 @@
 Take a namespace and dump it to a file
 """
 
+import ctypes
 import inspect
 import StringIO
 
@@ -52,6 +53,13 @@ class Generator(object):
         for n, d in self.rep:
             if getattr(d, '__name__', None) == type_name:
                 return n
+        # check if type is in ctypes?
+        if hasattr(ctypes, type_name):
+            return 'ctypes.%s' % type_name
+        #if type_name == 'CFunctionType':  # TODO not handled
+        #    return 'ctypes.CFUNCTYPE'
+        # LP_c_ubyte  # TODO not handled
+        #raise Exception
 
     def item(self, item, name=None, reference=False):
         # parse by module? might only be ctypes or ctypeswrapper
