@@ -24,7 +24,7 @@ unary_ops = {
 }
 
 
-def ctype_from_names(names, other_types=None):
+def ctype_from_names(names, other_types=None, verbose=False):
     """Given ast.names lookup a matching ctype"""
     t = None
     signed = True
@@ -54,9 +54,15 @@ def ctype_from_names(names, other_types=None):
     else:
         t = '{}'.format(t)
     if other_types is not None and t in other_types:
+        if verbose:
+            print "in other_types", t, other_types[t]
         return other_types[t]
     if t in base_types:
+        if verbose:
+            print "in base_types"
         return base_types[t]
+    if verbose:
+        print "from ctypes"
     return getattr(ctypes, 'c_{}'.format(t))
 
 
@@ -111,10 +117,12 @@ class ASTParser(object):
     def Typedef(self, ast):
         t = self.parse(ast.type, name=ast.name)
         if isinstance(t, structures.Enum):
+            #print ast.name
             self.types[ast.name] = ctypes.c_int
         elif isinstance(t, structures.Function):
             return t.as_ctype()
         else:
+            #print ast.name, t
             self.types[ast.name] = t
         return ast.name, t
 
@@ -160,6 +168,12 @@ class ASTParser(object):
     def FileAST(self, ast):
         r = []
         for _, c in ast.children():
+            bd, d = os.path.split(os.path.dirname(c.coord.file))
+            if d == 'fake_libc':
+                continue
+            bd, d = os.path.split(bd)
+            if d == 'fake_libc':
+                continue
             r.append(self.parse(c))
         return r
 
