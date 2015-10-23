@@ -118,7 +118,7 @@ class ASTParser(object):
         t = self.parse(ast.type, name=ast.name)
         if isinstance(t, structures.Enum):
             #print ast.name
-            self.types[ast.name] = ctypes.c_int
+            self.types[ast.name] = ctypes.c_uint
         elif isinstance(t, structures.Function):
             return t.as_ctype()
         else:
